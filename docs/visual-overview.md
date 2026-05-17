@@ -2,7 +2,7 @@
 
 A diagram-first tour of this repository — what's here, how the pieces fit, and how to both *contribute* to it and *use* it. Read top to bottom; each section builds on the previous.
 
-> All diagrams are Mermaid and render inline on GitHub. Verified counts at time of writing: **78 plugins** (77 local + 1 external via git-subdir), **184 agents**, **150 skills**, **98 commands**.
+> All diagrams are Mermaid and render inline on GitHub. Verified counts at time of writing (sourced from [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) and the live filesystem — note that `CLAUDE.md` is currently stale on these numbers): **78 plugins total** = 77 local directories under [`plugins/`](../plugins/) + 1 external referenced via `git-subdir`. **184 agents**, **150 skills**, **98 commands**.
 
 ---
 
@@ -14,8 +14,8 @@ flowchart TB
     Root --> Manifest[".claude-plugin/<br/>marketplace.json"]
     Root --> Claude["CLAUDE.md<br/>(project conventions)"]
     Root --> README["README.md"]
-    Root --> Plugins["plugins/<br/>(78 plugins)"]
-    Root --> Docs["docs/<br/>(6 reference files)"]
+    Root --> Plugins["plugins/<br/>(77 local dirs<br/>+ externals via git-subdir)"]
+    Root --> Docs["docs/<br/>(7 reference files,<br/>incl. this one)"]
     Root --> Tools["tools/<br/>(dev utilities)"]
     Root --> GH[".github/<br/>(CI workflows)"]
 
@@ -84,7 +84,7 @@ flowchart TB
     CC -->|"reads"| Manifest
 
     Manifest -->|"plugins[].source<br/>= './plugins/X'"| Local["Local plugins<br/>77"]
-    Manifest -->|"plugins[].source<br/>= { git-subdir, url }"| External["External plugins<br/>1 (qa-orchestra)"]
+    Manifest -->|"plugins[].source<br/>= { source: git-subdir,<br/>url, path }"| External["External plugins<br/>1 (qa-orchestra)"]
 
     Local --> PJ["plugin.json"]
     PJ -.->|"auto-discovery"| AgentsDir["agents/*.md"]
@@ -101,7 +101,7 @@ flowchart TB
     class CC,CCRuntime runtime
 ```
 
-`marketplace.json` is the single source of truth Claude Code reads. Each plugin entry points either at a local directory (`./plugins/X`) or a remote git repo (`source: { source: "git-subdir", url }`). Beyond that, **structure is convention** — no file enumerates the agents/skills/commands; they're picked up by directory layout.
+`marketplace.json` is the single source of truth Claude Code reads. Each plugin entry points either at a local directory (`./plugins/X`) or a remote git repo (`source: { source: "git-subdir", url, path }` — all three keys are required for the git-subdir form). Beyond that, **structure is convention** — no file enumerates the agents/skills/commands; they're picked up by directory layout.
 
 ---
 
@@ -172,7 +172,8 @@ sequenceDiagram
     Claude-->>L2: scores
     L2-->>Engine: LayerResult
     opt --depth deep or thorough
-        CLI->>L3: analyze_skill(skill) [parallel with L2]
+        CLI->>L3: analyze_skill(skill) [after L2 completes]
+        Note right of L3: L2 and L3 share one<br/>asyncio.run but await<br/>sequentially in engine.py
         L3->>Claude: N simulated activations
         Note over L3,Claude: ~2-5min, 50-100 calls
         Claude-->>L3: pass/fail per run
@@ -186,20 +187,29 @@ sequenceDiagram
 
 [`plugins/plugin-eval/`](../plugins/plugin-eval/) is itself a plugin — and the quality gate for every other plugin. Three layers run in sequence (Static is always-on; Judge runs at `standard`+; Monte Carlo only at `deep`/`thorough`). Each layer emits a `LayerResult` which [`engine.py`](../plugins/plugin-eval/src/plugin_eval/engine.py) blends into a composite score using per-dimension weights, then [`models.py`](../plugins/plugin-eval/src/plugin_eval/models.py) assigns a badge.
 
-### Scoring dimensions and badges (reference)
+### Scoring dimensions (reference)
 
-| Dimension | Weight | | Badge | Min composite | Min Elo |
-|---|---|---|---|---|---|
-| triggering_accuracy | 25% | | Platinum | ≥ 90 | ≥ 1600 |
-| orchestration_fitness | 20% | | Gold | ≥ 80 | ≥ 1500 |
-| output_quality | 15% | | Silver | ≥ 70 | ≥ 1400 |
-| scope_calibration | 12% | | Bronze | ≥ 60 | ≥ 1300 |
-| progressive_disclosure | 10% | | | | |
-| token_efficiency | 6% | | | | |
-| robustness | 5% | | | | |
-| structural_completeness | 3% | | | | |
-| code_template_quality | 2% | | | | |
-| ecosystem_coherence | 2% | | | | |
+| Dimension | Weight |
+|---|---|
+| triggering_accuracy | 25% |
+| orchestration_fitness | 20% |
+| output_quality | 15% |
+| scope_calibration | 12% |
+| progressive_disclosure | 10% |
+| token_efficiency | 6% |
+| robustness | 5% |
+| structural_completeness | 3% |
+| code_template_quality | 2% |
+| ecosystem_coherence | 2% |
+
+### Badge thresholds (reference)
+
+| Badge | Min composite | Min Elo |
+|---|---|---|
+| Platinum | ≥ 90 | ≥ 1600 |
+| Gold | ≥ 80 | ≥ 1500 |
+| Silver | ≥ 70 | ≥ 1400 |
+| Bronze | ≥ 60 | ≥ 1300 |
 
 Anti-patterns (caught by Layer 1 in [`static.py`](../plugins/plugin-eval/src/plugin_eval/layers/static.py)): `OVER_CONSTRAINED` (>15 MUST/ALWAYS/NEVER), `EMPTY_DESCRIPTION` (<20 chars), `MISSING_TRIGGER` (no "Use when…"), `BLOATED_SKILL` (>800 lines, no `references/`), `ORPHAN_REFERENCE`, `DEAD_CROSS_REF`.
 
@@ -214,7 +224,7 @@ flowchart TB
     Step2["2. Create plugin.json<br/>plugins/&lt;name&gt;/.claude-plugin/plugin.json<br/>{ 'name': '&lt;name&gt;' }"] --> Step3
     Step3["3. Add primitives<br/>agents/*.md, skills/&lt;name&gt;/SKILL.md, commands/*.md<br/>(at least one)"] --> Step4
     Step4["4. Register in marketplace<br/>edit .claude-plugin/marketplace.json<br/>add entry with source, description, category"] --> Step5
-    Step5["5. Evaluate quality<br/>cd plugins/plugin-eval<br/>uv run plugin-eval score path/to/plugin"] --> Decide{"Badge ≥ Bronze?"}
+    Step5["5. Evaluate quality<br/>cd plugins/plugin-eval<br/>plugin score: static-only (Layer 1)<br/>skill score: full pipeline<br/>uv run plugin-eval score path/to/skill"] --> Decide{"Badge ≥ Bronze?"}
     Decide -->|"No"| Fix["Fix anti-patterns<br/>(OVER_CONSTRAINED, MISSING_TRIGGER, etc.)"]
     Fix --> Step5
     Decide -->|"Yes"| Step6["6. Update docs/<br/>plugins.md, agents.md, agent-skills.md"]
@@ -228,7 +238,7 @@ flowchart TB
     class End done
 ```
 
-Steps 1–3 are pure file scaffolding under [`plugins/<name>/`](../plugins/). Step 4 — registering in [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) — is the moment the plugin becomes installable. Step 5 is the quality gate: PluginEval will fail the loop until anti-patterns are gone and the composite score crosses Bronze.
+Steps 1–3 are pure file scaffolding under [`plugins/<name>/`](../plugins/). Step 4 — registering in [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) — is the moment the plugin becomes installable. Step 5 is the quality gate: PluginEval will fail the loop until anti-patterns are gone and the composite score crosses Bronze. **Important nuance:** scoring a plugin directory only runs Layer 1 (static), so to get a real Judge / Monte Carlo composite you must score each `skills/<name>/` directory individually — see [`engine.py:131`](../plugins/plugin-eval/src/plugin_eval/engine.py).
 
 ---
 
@@ -237,7 +247,7 @@ Steps 1–3 are pure file scaffolding under [`plugins/<name>/`](../plugins/). St
 ```mermaid
 flowchart TB
     Start(["I want to use a plugin"]) --> Install
-    Install["1. Install marketplace<br/>/plugin marketplace add hunterlearn/agentsskills"] --> Enable
+    Install["1. Install marketplace<br/>/plugin marketplace add wshobson/agents"] --> Enable
     Enable["2. Enable plugin(s)<br/>/plugin install &lt;plugin-name&gt;"] --> Browse
     Browse{"How will I invoke it?"}
 
